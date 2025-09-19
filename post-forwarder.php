@@ -104,9 +104,39 @@ add_action('save_post', function($post_id) {
 // Settings page HTML
 function post_forwarding_settings_page() {
     $options = get_option('post_forwarding_options', array());
+    
+    // Handle form submission for the new interface
+    if (isset($_POST['submit_portals']) && wp_verify_nonce($_POST['portals_nonce'], 'save_portals')) {
+        $portals = array();
+        
+        if (isset($_POST['portals']) && is_array($_POST['portals'])) {
+            foreach ($_POST['portals'] as $index => $portal) {
+                if (!empty($portal['key']) && !empty($portal['name']) && !empty($portal['url'])) {
+                    $key = sanitize_text_field($portal['key']);
+                    $portals[$key] = array(
+                        'name' => sanitize_text_field($portal['name']),
+                        'url' => esc_url_raw($portal['url']),
+                        'user' => sanitize_text_field($portal['user']),
+                        'password' => sanitize_text_field($portal['password'])
+                    );
+                }
+            }
+        }
+        
+        $options['mappings'] = json_encode($portals);
+        update_option('post_forwarding_options', $options);
+        echo '<div class="notice notice-success"><p>Portals saved successfully!</p></div>';
+    }
+    
+    // Parse existing mappings
+    $mappings_json = isset($options['mappings']) ? $options['mappings'] : '{}';
+    $mappings = json_decode($mappings_json, true);
+    if (!is_array($mappings)) $mappings = array();
+    
     ?>
     <div class="wrap">
         <h1>Post Forwarding</h1>
+        
         <form method="post" action="options.php">
             <?php settings_fields('post_forwarding'); ?>
             <table class="form-table">
@@ -123,18 +153,136 @@ function post_forwarding_settings_page() {
                         </select>
                     </td>
                 </tr>
-                <tr><th colspan="2"><strong>Destination Mapping (product → site)</strong></th></tr>
-                <tr>
-                    <th scope="row">Mappings (JSON)</th>
-                    <td>
-                        <textarea name="post_forwarding_options[mappings]" rows="10" cols="70"><?php echo esc_textarea(isset($options['mappings']) ? $options['mappings'] : ''); ?></textarea><br>
-                        <small>Example: {"portal1": {"name": "My Portal", "url": "https://example.com", "user": "1234", "password": "abcd-efgh-ijkl-mnop"}}</small>
-                    </td>
-                </tr>
             </table>
             <?php submit_button(); ?>
         </form>
+
+        <hr>
+
+        <h2>Portal Configuration</h2>
+        <form method="post" action="">
+            <?php wp_nonce_field('save_portals', 'portals_nonce'); ?>
+            
+            <div id="portals-container">
+                <div style="background: #f9f9f9; padding: 15px; margin-bottom: 15px; border-left: 4px solid #0073aa;">
+                    <p><strong>How it works:</strong></p>
+                    <ul>
+                        <li><strong>Portal Key:</strong> A unique identifier (like "sociaalweb") - this is what you'll select when forwarding posts</li>
+                        <li><strong>Portal Name:</strong> A friendly display name that appears in the interface</li>
+                        <li><strong>URL:</strong> The destination WordPress site URL</li>
+                        <li><strong>User ID & App Password:</strong> WordPress user ID and application password for API access</li>
+                    </ul>
+                </div>
+
+                <?php if (empty($mappings)): ?>
+                    <div class="portal-row" style="border: 1px solid #ddd; padding: 15px; margin-bottom: 10px;">
+                        <h4>Portal #1</h4>
+                        <table class="form-table">
+                            <tr>
+                                <th>Portal Key</th>
+                                <td><input type="text" name="portals[0][key]" placeholder="e.g., sociaalweb" style="width: 200px;" /></td>
+                            </tr>
+                            <tr>
+                                <th>Portal Name</th>
+                                <td><input type="text" name="portals[0][name]" placeholder="e.g., Sociaalweb Portal" style="width: 300px;" /></td>
+                            </tr>
+                            <tr>
+                                <th>URL</th>
+                                <td><input type="url" name="portals[0][url]" placeholder="https://example.com" style="width: 400px;" /></td>
+                            </tr>
+                            <tr>
+                                <th>User ID</th>
+                                <td><input type="text" name="portals[0][user]" placeholder="1728" style="width: 100px;" /></td>
+                            </tr>
+                            <tr>
+                                <th>App Password</th>
+                                <td><input type="text" name="portals[0][password]" placeholder="xxxx-xxxx-xxxx-xxxx" style="width: 300px;" /></td>
+                            </tr>
+                        </table>
+                        <button type="button" class="button remove-portal">Remove Portal</button>
+                    </div>
+                <?php else: ?>
+                    <?php $i = 0; foreach ($mappings as $key => $mapping): ?>
+                        <div class="portal-row" style="border: 1px solid #ddd; padding: 15px; margin-bottom: 10px;">
+                            <h4>Portal #<?php echo $i + 1; ?></h4>
+                            <table class="form-table">
+                                <tr>
+                                    <th>Portal Key</th>
+                                    <td><input type="text" name="portals[<?php echo $i; ?>][key]" value="<?php echo esc_attr($key); ?>" style="width: 200px;" /></td>
+                                </tr>
+                                <tr>
+                                    <th>Portal Name</th>
+                                    <td><input type="text" name="portals[<?php echo $i; ?>][name]" value="<?php echo esc_attr($mapping['name']); ?>" style="width: 300px;" /></td>
+                                </tr>
+                                <tr>
+                                    <th>URL</th>
+                                    <td><input type="url" name="portals[<?php echo $i; ?>][url]" value="<?php echo esc_attr($mapping['url']); ?>" style="width: 400px;" /></td>
+                                </tr>
+                                <tr>
+                                    <th>User ID</th>
+                                    <td><input type="text" name="portals[<?php echo $i; ?>][user]" value="<?php echo esc_attr($mapping['user']); ?>" style="width: 100px;" /></td>
+                                </tr>
+                                <tr>
+                                    <th>App Password</th>
+                                    <td><input type="text" name="portals[<?php echo $i; ?>][password]" value="<?php echo esc_attr($mapping['password']); ?>" style="width: 300px;" /></td>
+                                </tr>
+                            </table>
+                            <button type="button" class="button remove-portal">Remove Portal</button>
+                        </div>
+                        <?php $i++; ?>
+                    <?php endforeach; ?>
+                <?php endif; ?>
+            </div>
+
+            <button type="button" id="add-portal" class="button">Add Another Portal</button>
+            <br><br>
+            <?php submit_button('Save Portals', 'primary', 'submit_portals'); ?>
+        </form>
+
+        <hr>
+
+        <h3>Advanced: JSON Configuration</h3>
+        <form method="post" action="options.php">
+            <?php settings_fields('post_forwarding'); ?>
+            <table class="form-table">
+                <tr>
+                    <th scope="row">Mappings (JSON)</th>
+                    <td>
+                        <textarea name="post_forwarding_options[mappings]" rows="10" cols="70"><?php echo esc_textarea($mappings_json); ?></textarea><br>
+                        <small>Advanced users can edit the JSON directly. Use the form above for easier configuration.</small>
+                    </td>
+                </tr>
+            </table>
+            <?php submit_button('Save JSON'); ?>
+        </form>
     </div>
+
+    <script>
+    jQuery(document).ready(function($) {
+        var portalCount = <?php echo count($mappings); ?>;
+        
+        $('#add-portal').click(function() {
+            var newPortal = '<div class="portal-row" style="border: 1px solid #ddd; padding: 15px; margin-bottom: 10px;">' +
+                '<h4>Portal #' + (portalCount + 1) + '</h4>' +
+                '<table class="form-table">' +
+                '<tr><th>Portal Key</th><td><input type="text" name="portals[' + portalCount + '][key]" placeholder="e.g., sociaalweb" style="width: 200px;" /></td></tr>' +
+                '<tr><th>Portal Name</th><td><input type="text" name="portals[' + portalCount + '][name]" placeholder="e.g., Sociaalweb Portal" style="width: 300px;" /></td></tr>' +
+                '<tr><th>URL</th><td><input type="url" name="portals[' + portalCount + '][url]" placeholder="https://example.com" style="width: 400px;" /></td></tr>' +
+                '<tr><th>User ID</th><td><input type="text" name="portals[' + portalCount + '][user]" placeholder="1728" style="width: 100px;" /></td></tr>' +
+                '<tr><th>App Password</th><td><input type="text" name="portals[' + portalCount + '][password]" placeholder="xxxx-xxxx-xxxx-xxxx" style="width: 300px;" /></td></tr>' +
+                '</table>' +
+                '<button type="button" class="button remove-portal">Remove Portal</button>' +
+                '</div>';
+            
+            $('#portals-container').append(newPortal);
+            portalCount++;
+        });
+        
+        $(document).on('click', '.remove-portal', function() {
+            $(this).closest('.portal-row').remove();
+        });
+    });
+    </script>
     <?php
 }
 
@@ -310,16 +458,51 @@ function post_forward_post($post_id) {
         return;
     }
 
-    // Set the "recently forwarded" flag early to prevent other instances
-    set_transient($recent_forward_key, true, 300); // 5 minutes
-
     // Get the original post type
     $original_post_type = $post->post_type;
     error_log("[Post Forwarder] Original post type: $original_post_type");
+    error_log("[Post Forwarder] Processing portals for products: " . implode(', ', $xproducts));
 
-    // Prepare data once for all requests
-    $categories = wp_get_object_terms($post_id, 'category', array('fields' => 'ids'));
-    $tags = wp_get_object_terms($post_id, 'post_tag', array('fields' => 'ids'));
+    // Get ALL taxonomies for this post type
+    $all_taxonomies = get_object_taxonomies($original_post_type, 'objects');
+    $taxonomy_data = array();
+    $fallback_tags = array(); // Collect all terms as fallback tags
+    
+    foreach ($all_taxonomies as $taxonomy_name => $taxonomy_object) {
+        // Get terms with IDs first (for exact matching when taxonomy exists)
+        $term_ids = wp_get_object_terms($post_id, $taxonomy_name, array('fields' => 'ids'));
+        
+        // Get term objects to get names and slugs for fallback
+        $terms = wp_get_object_terms($post_id, $taxonomy_name, array('fields' => 'all'));
+        
+        if (!empty($term_ids) && !is_wp_error($term_ids)) {
+            // Store both IDs and term details
+            $taxonomy_data[$taxonomy_name] = array(
+                'ids' => $term_ids,
+                'terms' => array()
+            );
+            
+            if (!empty($terms) && !is_wp_error($terms)) {
+                foreach ($terms as $term) {
+                    $taxonomy_data[$taxonomy_name]['terms'][] = array(
+                        'id' => $term->term_id,
+                        'name' => $term->name,
+                        'slug' => $term->slug
+                    );
+                    
+                    // Add to fallback tags collection
+                    $fallback_tags[] = $term->name; // Use name for better readability
+                    $fallback_tags[] = $term->slug; // Also include slug as alternative
+                }
+            }
+            
+            error_log("[Post Forwarder] Found taxonomy '$taxonomy_name' with IDs: " . implode(', ', $term_ids));
+        }
+    }
+
+    // Remove duplicates from fallback tags
+    $fallback_tags = array_unique(array_filter($fallback_tags));
+    error_log("[Post Forwarder] Collected fallback tags: " . implode(', ', $fallback_tags));
 
     // Get featured image/thumbnail
     $featured_image_id = get_post_thumbnail_id($post_id);
@@ -369,29 +552,8 @@ function post_forward_post($post_id) {
         }
     }
 
-    // Build request body for WordPress REST API
-    $post_status = isset($options['post_status']) ? $options['post_status'] : 'draft';
-    $body = array(
-        'title'   => $post->post_title,
-        'content' => $post->post_content,
-        'excerpt' => $post->post_excerpt,
-        'status'  => $post_status
-    );
-
-    // Add categories and tags if they exist
-    if (!empty($categories) && !is_wp_error($categories)) {
-        $body['categories'] = $categories;
-    }
-    if (!empty($tags) && !is_wp_error($tags)) {
-        $body['tags'] = $tags;
-    }
-
-    // Add meta if there are any
-    if (!empty($meta_flattened)) {
-        $body['meta'] = $meta_flattened;
-    }
-
     $forwarding_successful = false;
+    $successful_portals = array();
 
     // Loop through each selected product and send to corresponding portal
     foreach ($xproducts as $xproduct) {
@@ -399,6 +561,8 @@ function post_forward_post($post_id) {
             error_log("[Post Forwarder] No mapping for product $xproduct, skipping");
             continue;
         }
+
+        error_log("[Post Forwarder] Processing product: $xproduct");
 
         $target = $mappings[$xproduct];
         
@@ -412,86 +576,209 @@ function post_forward_post($post_id) {
         
         $auth = base64_encode($target['user'] . ':' . $target['password']);
 
-        error_log("[Post Forwarder] Using API endpoint: $api_url for post type: $original_post_type");
-        error_log("[Post Forwarder] Request body: " . json_encode($body, JSON_PRETTY_PRINT));
-
-        $response = wp_remote_post($api_url, array(
-            'headers' => array(
-                'Authorization' => 'Basic ' . $auth,
-                'Content-Type'  => 'application/json',
-            ),
-            'body' => json_encode($body),
-            'timeout' => 30
-        ));
-
-        $response_code = wp_remote_retrieve_response_code($response);
-        $response_body = wp_remote_retrieve_body($response);
-
-        // If custom post type endpoint returns 404, try with the posts endpoint but include type parameter
-        if ($response_code === 404 && $original_post_type !== 'post') {
-            error_log("[Post Forwarder] Custom post type endpoint failed (404), trying posts endpoint with type parameter");
-            
-            $fallback_url = rtrim($target['url'], '/') . '/wp-json/wp/v2/posts';
-            $body_with_type = $body;
-            $body_with_type['type'] = $original_post_type;
-            
-            $response = wp_remote_post($fallback_url, array(
-                'headers' => array(
-                    'Authorization' => 'Basic ' . $auth,
-                    'Content-Type'  => 'application/json',
-                ),
-                'body' => json_encode($body_with_type),
-                'timeout' => 30
-            ));
-
-            $response_code = wp_remote_retrieve_response_code($response);
-            $response_body = wp_remote_retrieve_body($response);
-            
-            error_log("[Post Forwarder] Fallback attempt to $fallback_url with type=$original_post_type. Response: $response_code");
+        // Try with term slugs first (better chance of matching existing terms)
+        $success = post_forward_attempt_with_term_slugs($post, $api_url, $auth, $taxonomy_data, $meta_flattened, $options, $original_post_type, $target, $featured_image_url, $xproduct);
+        
+        if (!$success) {
+            // If that fails, try with just tags as fallback
+            error_log("[Post Forwarder] Slug attempt failed, trying with fallback tags for product $xproduct");
+            $success = post_forward_attempt_with_fallback_tags($post, $api_url, $auth, $fallback_tags, $meta_flattened, $options, $original_post_type, $target, $featured_image_url, $xproduct);
         }
-
-        // If post was created successfully and we have a featured image, upload and set it
-        if ($response_code >= 200 && $response_code < 300) {
+        
+        if ($success) {
             $forwarding_successful = true;
-            
-            if ($featured_image_url) {
-                $created_post = json_decode($response_body, true);
-                if (isset($created_post['id'])) {
-                    $remote_post_id = $created_post['id'];
-                    // Pass the post type to the function
-                    post_forwarder_set_featured_image($remote_post_id, $featured_image_url, $target, $original_post_type);
-                }
-            }
-        }
-
-        // Log response
-        $log_entry = "[Post Forwarder] Sent post {$post_id} (type: $original_post_type) to {$api_url} (product: $xproduct). Response: " .
-            $response_code . " Body: " . $response_body;
-        error_log($log_entry);
-
-        // Log errors
-        if (is_wp_error($response)) {
-            error_log("[Post Forwarder ERROR] Product $xproduct: " . $response->get_error_message());
+            $successful_portals[] = $xproduct;
+            error_log("[Post Forwarder] Successfully forwarded to portal: $xproduct");
         } else {
-            if ($response_code < 200 || $response_code >= 300) {
-                error_log("[Post Forwarder HTTP ERROR] Product $xproduct: $response_code Body: " . $response_body);
-            } else {
-                error_log("[Post Forwarder SUCCESS] Product $xproduct: Post forwarded successfully as $original_post_type");
-            }
+            error_log("[Post Forwarder] Failed to forward to portal: $xproduct");
         }
     }
 
-    // If no forwarding was successful, remove the "recently forwarded" flag so it can be tried again
-    if (!$forwarding_successful) {
-        delete_transient($recent_forward_key);
-        error_log("[Post Forwarder] No successful forwards, allowing retry");
+    // Set the "recently forwarded" flag ONLY after processing ALL portals
+    if ($forwarding_successful) {
+        set_transient($recent_forward_key, true, 300); // 5 minutes
+        error_log("[Post Forwarder] Set recently forwarded flag after successful forwarding to: " . implode(', ', $successful_portals));
+    } else {
+        error_log("[Post Forwarder] No successful forwards, not setting recently forwarded flag");
     }
 
     // Clean up the transients at the end
     delete_transient($lock_key);
     delete_transient($processing_key);
     
-    error_log("[Post Forwarder] Finished processing post $post_id");
+    error_log("[Post Forwarder] Finished processing post $post_id. Success: " . ($forwarding_successful ? 'Yes' : 'No'));
+}
+
+// Helper function to attempt forwarding with term slugs
+function post_forward_attempt_with_term_slugs($post, $api_url, $auth, $taxonomy_data, $meta_flattened, $options, $original_post_type, $target, $featured_image_url, $product_key) {
+    $post_status = isset($options['post_status']) ? $options['post_status'] : 'draft';
+    $body = array(
+        'title'   => $post->post_title,
+        'content' => $post->post_content,
+        'excerpt' => $post->post_excerpt,
+        'status'  => $post_status
+    );
+
+    // Add taxonomies using term slugs
+    foreach ($taxonomy_data as $taxonomy_name => $taxonomy_info) {
+        if (!isset($taxonomy_info['terms']) || empty($taxonomy_info['terms'])) {
+            continue;
+        }
+        
+        // Extract slugs from terms
+        $term_slugs = array();
+        foreach ($taxonomy_info['terms'] as $term) {
+            $term_slugs[] = $term['slug'];
+        }
+        
+        // Map common taxonomies to their REST API fields
+        if ($taxonomy_name === 'category') {
+            $body['categories'] = $term_slugs;
+        } elseif ($taxonomy_name === 'post_tag') {
+            $body['tags'] = $term_slugs;
+        } elseif ($taxonomy_name === 'custom-tag') {
+            // Map custom-tag to tags
+            if (isset($body['tags'])) {
+                $body['tags'] = array_merge($body['tags'], $term_slugs);
+            } else {
+                $body['tags'] = $term_slugs;
+            }
+        } else {
+            // Try to include other taxonomies as-is (they might exist on destination)
+            $body[$taxonomy_name] = $term_slugs;
+        }
+    }
+
+    // Add meta if there are any
+    if (!empty($meta_flattened)) {
+        $body['meta'] = $meta_flattened;
+    }
+
+    error_log("[Post Forwarder] [$product_key] Attempting with term slugs: " . json_encode($body, JSON_PRETTY_PRINT));
+
+    $response = wp_remote_post($api_url, array(
+        'headers' => array(
+            'Authorization' => 'Basic ' . $auth,
+            'Content-Type'  => 'application/json',
+        ),
+        'body' => json_encode($body),
+        'timeout' => 30
+    ));
+
+    $response_code = wp_remote_retrieve_response_code($response);
+    $response_body = wp_remote_retrieve_body($response);
+
+    // If custom post type endpoint returns 404, try with the posts endpoint
+    if ($response_code === 404 && $original_post_type !== 'post') {
+        error_log("[Post Forwarder] [$product_key] Custom post type endpoint failed (404), trying posts endpoint");
+        
+        $fallback_url = rtrim($target['url'], '/') . '/wp-json/wp/v2/posts';
+        $body_with_type = $body;
+        $body_with_type['type'] = $original_post_type;
+        
+        $response = wp_remote_post($fallback_url, array(
+            'headers' => array(
+                'Authorization' => 'Basic ' . $auth,
+                'Content-Type'  => 'application/json',
+            ),
+            'body' => json_encode($body_with_type),
+            'timeout' => 30
+        ));
+
+        $response_code = wp_remote_retrieve_response_code($response);
+        $response_body = wp_remote_retrieve_body($response);
+        $api_url = $fallback_url; // For logging
+    }
+
+    error_log("[Post Forwarder] [$product_key] Term slugs attempt - Response: $response_code Body: " . substr($response_body, 0, 200));
+
+    if ($response_code >= 200 && $response_code < 300) {
+        if ($featured_image_url) {
+            $created_post = json_decode($response_body, true);
+            if (isset($created_post['id'])) {
+                $remote_post_id = $created_post['id'];
+                post_forwarder_set_featured_image($remote_post_id, $featured_image_url, $target, $original_post_type);
+            }
+        }
+        error_log("[Post Forwarder SUCCESS] [$product_key] Term slugs method succeeded");
+        return true;
+    }
+
+    return false;
+}
+
+// Helper function to attempt forwarding with fallback tags only
+function post_forward_attempt_with_fallback_tags($post, $api_url, $auth, $fallback_tags, $meta_flattened, $options, $original_post_type, $target, $featured_image_url, $product_key) {
+    $post_status = isset($options['post_status']) ? $options['post_status'] : 'draft';
+    $body = array(
+        'title'   => $post->post_title,
+        'content' => $post->post_content,
+        'excerpt' => $post->post_excerpt,
+        'status'  => $post_status
+    );
+
+    // Only add tags as fallback
+    if (!empty($fallback_tags)) {
+        $body['tags'] = $fallback_tags;
+    }
+
+    // Add meta if there are any
+    if (!empty($meta_flattened)) {
+        $body['meta'] = $meta_flattened;
+    }
+
+    error_log("[Post Forwarder] [$product_key] Attempting with fallback tags only: " . json_encode($body, JSON_PRETTY_PRINT));
+
+    $response = wp_remote_post($api_url, array(
+        'headers' => array(
+            'Authorization' => 'Basic ' . $auth,
+            'Content-Type'  => 'application/json',
+        ),
+        'body' => json_encode($body),
+        'timeout' => 30
+    ));
+
+    $response_code = wp_remote_retrieve_response_code($response);
+    $response_body = wp_remote_retrieve_body($response);
+
+    // If custom post type endpoint returns 404, try with the posts endpoint
+    if ($response_code === 404 && $original_post_type !== 'post') {
+        error_log("[Post Forwarder] [$product_key] Custom post type endpoint failed (404), trying posts endpoint");
+        
+        $fallback_url = rtrim($target['url'], '/') . '/wp-json/wp/v2/posts';
+        $body_with_type = $body;
+        $body_with_type['type'] = $original_post_type;
+        
+        $response = wp_remote_post($fallback_url, array(
+            'headers' => array(
+                'Authorization' => 'Basic ' . $auth,
+                'Content-Type'  => 'application/json',
+            ),
+            'body' => json_encode($body_with_type),
+            'timeout' => 30
+        ));
+
+        $response_code = wp_remote_retrieve_response_code($response);
+        $response_body = wp_remote_retrieve_body($response);
+        $api_url = $fallback_url; // For logging
+    }
+
+    error_log("[Post Forwarder] [$product_key] Fallback tags attempt - Response: $response_code Body: " . substr($response_body, 0, 200));
+
+    if ($response_code >= 200 && $response_code < 300) {
+        if ($featured_image_url) {
+            $created_post = json_decode($response_body, true);
+            if (isset($created_post['id'])) {
+                $remote_post_id = $created_post['id'];
+                post_forwarder_set_featured_image($remote_post_id, $featured_image_url, $target, $original_post_type);
+            }
+        }
+        error_log("[Post Forwarder SUCCESS] [$product_key] Fallback tags method succeeded");
+        return true;
+    }
+
+    error_log("[Post Forwarder ERROR] [$product_key] Both attempts failed for this target");
+    return false;
 }
 
 add_action('save_post', 'post_forward_post', 20, 1);
