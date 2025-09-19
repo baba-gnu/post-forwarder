@@ -1,8 +1,8 @@
 === Post Forwarder ===
 Contributors: sylwesterulatowski
-Tags: post, forward, sync, multisite, rest-api, taxonomy, featured-image
+Tags: post, forward, sync, multisite, rest-api
 Requires at least: 5.0
-Tested up to: 6.3
+Tested up to: 6.8
 Requires PHP: 7.4
 Stable tag: 2.1.0
 License: GPLv2 or later

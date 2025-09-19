@@ -9,16 +9,19 @@
  * License: GPL v2 or later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
  * Text Domain: post-forwarder
- * Domain Path: /languages
  * Requires at least: 5.0
- * Tested up to: 6.3
+ * Tested up to: 6.8
  * Requires PHP: 7.4
- * Network: false
  */
 
 // Prevent direct access
 if (!defined('ABSPATH')) {
     exit;
+}
+
+// Create languages directory if it doesn't exist
+if (!file_exists(plugin_dir_path(__FILE__) . 'languages')) {
+    wp_mkdir_p(plugin_dir_path(__FILE__) . 'languages');
 }
 
 // Define plugin constants
@@ -101,7 +104,7 @@ function post_forwarding_meta_box_callback($post) {
         foreach ($mappings as $product_key => $mapping) {
             $portal_name = isset($mapping['name']) ? $mapping['name'] : $product_key;
             $portal_url = isset($mapping['url']) ? $mapping['url'] : '';
-            $display_name = $portal_name . ($portal_url ? ' (' . parse_url($portal_url, PHP_URL_HOST) . ')' : '');
+            $display_name = $portal_name . ($portal_url ? ' (' . wp_parse_url($portal_url, PHP_URL_HOST) . ')' : '');
             
             $is_selected = in_array($product_key, $selected_products);
             
@@ -127,7 +130,7 @@ add_action('save_post', function($post_id) {
         return;
     }
 
-    if (!wp_verify_nonce($_POST['post_forwarding_meta_box_nonce'], 'post_forwarding_meta_box')) {
+    if (!wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['post_forwarding_meta_box_nonce'])), 'post_forwarding_meta_box')) {
         return;
     }
 
@@ -143,8 +146,8 @@ add_action('save_post', function($post_id) {
     delete_post_meta($post_id, 'product');
 
     if (isset($_POST['post_forwarding_product']) && is_array($_POST['post_forwarding_product'])) {
-        foreach ($_POST['post_forwarding_product'] as $product) {
-            $product = sanitize_text_field($product);
+        $products = array_map('sanitize_text_field', wp_unslash($_POST['post_forwarding_product']));
+        foreach ($products as $product) {
             if (!empty($product)) {
                 add_post_meta($post_id, 'product', $product);
             }
@@ -155,18 +158,21 @@ add_action('save_post', function($post_id) {
 // Settings page HTML
 function post_forwarding_settings_page() {
     if (!current_user_can('manage_options')) {
-        wp_die(__('You do not have sufficient permissions to access this page.', 'post-forwarder'));
+        wp_die(esc_html__('You do not have sufficient permissions to access this page.', 'post-forwarder'));
     }
     
     $options = get_option('post_forwarding_options', array());
     
     // Handle form submission for the new interface
-    if (isset($_POST['submit_portals']) && wp_verify_nonce($_POST['portals_nonce'], 'save_portals')) {
+    if (isset($_POST['submit_portals']) && isset($_POST['portals_nonce']) && wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['portals_nonce'])), 'save_portals')) {
         $portals = array();
         
         if (isset($_POST['portals']) && is_array($_POST['portals'])) {
-            foreach ($_POST['portals'] as $index => $portal) {
-                if (!empty($portal['key']) && !empty($portal['name']) && !empty($portal['url'])) {
+            // Properly sanitize the entire portals array
+            $portals_raw = map_deep(wp_unslash($_POST['portals']), 'sanitize_text_field');
+            
+            foreach ($portals_raw as $index => $portal) {
+                if (is_array($portal) && !empty($portal['key']) && !empty($portal['name']) && !empty($portal['url'])) {
                     $key = sanitize_text_field($portal['key']);
                     $portals[$key] = array(
                         'name' => sanitize_text_field($portal['name']),
@@ -259,7 +265,12 @@ function post_forwarding_settings_page() {
                 <?php else: ?>
                     <?php $i = 0; foreach ($mappings as $key => $mapping): ?>
                         <div class="portal-row" style="border: 1px solid #ddd; padding: 15px; margin-bottom: 10px;">
-                            <h4><?php echo esc_html(sprintf(__('Portal #%d', 'post-forwarder'), $i + 1)); ?></h4>
+                            <h4>
+                                <?php 
+                                /* translators: %d: Portal number */
+                                echo esc_html(sprintf(__('Portal #%d', 'post-forwarder'), $i + 1)); 
+                                ?>
+                            </h4>
                             <table class="form-table">
                                 <tr>
                                     <th><?php esc_html_e('Portal Key', 'post-forwarder'); ?></th>
@@ -291,7 +302,7 @@ function post_forwarding_settings_page() {
 
             <button type="button" id="add-portal" class="button"><?php esc_html_e('Add Another Portal', 'post-forwarder'); ?></button>
             <br><br>
-            <?php submit_button(__('Save Portals', 'post-forwarder'), 'primary', 'submit_portals'); ?>
+            <?php submit_button(esc_html__('Save Portals', 'post-forwarder'), 'primary', 'submit_portals'); ?>
         </form>
 
         <hr>
@@ -308,7 +319,7 @@ function post_forwarding_settings_page() {
                     </td>
                 </tr>
             </table>
-            <?php submit_button(__('Save JSON', 'post-forwarder')); ?>
+            <?php submit_button(esc_html__('Save JSON', 'post-forwarder')); ?>
         </form>
     </div>
 
@@ -343,8 +354,6 @@ function post_forwarding_settings_page() {
 
 // Helper function to upload and set featured image
 function post_forwarder_set_featured_image($remote_post_id, $image_url, $target, $post_type = 'post') {
-    error_log("[Post Forwarder] Attempting to set featured image for post $remote_post_id from $image_url");
-
     // First, upload the image to the remote site
     $media_api_url = rtrim($target['url'], '/') . '/wp-json/wp/v2/media';
     $auth = base64_encode($target['user'] . ':' . $target['password']);
@@ -352,7 +361,6 @@ function post_forwarder_set_featured_image($remote_post_id, $image_url, $target,
     // Download the image content
     $image_response = wp_remote_get($image_url, array('timeout' => 30));
     if (is_wp_error($image_response)) {
-        error_log("[Post Forwarder] Failed to download image: " . $image_response->get_error_message());
         return;
     }
 
@@ -360,7 +368,7 @@ function post_forwarder_set_featured_image($remote_post_id, $image_url, $target,
     $image_content_type = wp_remote_retrieve_header($image_response, 'content-type');
     
     // Get filename from URL
-    $filename = basename(parse_url($image_url, PHP_URL_PATH));
+    $filename = basename(wp_parse_url($image_url, PHP_URL_PATH));
     if (empty($filename) || strpos($filename, '.') === false) {
         $filename = 'featured-image.jpg';
     }
@@ -392,7 +400,6 @@ function post_forwarder_set_featured_image($remote_post_id, $image_url, $target,
         $uploaded_media = json_decode($upload_body, true);
         if (isset($uploaded_media['id'])) {
             $media_id = $uploaded_media['id'];
-            error_log("[Post Forwarder] Image uploaded successfully with ID: $media_id");
 
             // Now set it as featured image - construct the correct URL
             if ($post_type === 'post') {
@@ -400,8 +407,6 @@ function post_forwarder_set_featured_image($remote_post_id, $image_url, $target,
             } else {
                 $post_update_url = rtrim($target['url'], '/') . '/wp-json/wp/v2/' . $post_type . '/' . $remote_post_id;
             }
-            
-            error_log("[Post Forwarder] Setting featured image via: $post_update_url");
             
             $update_response = wp_remote_request($post_update_url, array(
                 'method' => 'PUT',
@@ -414,15 +419,10 @@ function post_forwarder_set_featured_image($remote_post_id, $image_url, $target,
             ));
 
             $update_code = wp_remote_retrieve_response_code($update_response);
-            $update_body = wp_remote_retrieve_body($update_response);
             
-            if ($update_code >= 200 && $update_code < 300) {
-                error_log("[Post Forwarder] Featured image set successfully for post $remote_post_id");
-            } else {
-                error_log("[Post Forwarder] Failed to set featured image: $update_code Body: $update_body");
-                
+            if ($update_code < 200 || $update_code >= 300) {
                 // Try alternative method - POST to the same endpoint
-                $update_response_alt = wp_remote_post($post_update_url, array(
+                wp_remote_post($post_update_url, array(
                     'headers' => array(
                         'Authorization' => 'Basic ' . $auth,
                         'Content-Type' => 'application/json',
@@ -430,34 +430,24 @@ function post_forwarder_set_featured_image($remote_post_id, $image_url, $target,
                     'body' => wp_json_encode(array('featured_media' => $media_id)),
                     'timeout' => 30
                 ));
-                
-                $alt_code = wp_remote_retrieve_response_code($update_response_alt);
-                $alt_body = wp_remote_retrieve_body($update_response_alt);
-                error_log("[Post Forwarder] Alternative POST method result: $alt_code Body: $alt_body");
             }
         }
-    } else {
-        error_log("[Post Forwarder] Failed to upload image: $upload_code $upload_body");
     }
 }
 
 // Forward post after import
 function post_forward_post($post_id) {
-    error_log("[Post Forwarder] post_forward_post called for post_id $post_id");
-
     // More robust duplicate prevention
     $processing_key = 'post_forwarding_processing_' . $post_id;
     $lock_key = 'post_forwarding_lock_' . $post_id;
     
     // Check if we're already processing this post
     if (get_transient($processing_key)) {
-        error_log("[Post Forwarder] Already processing post $post_id, exiting");
         return;
     }
     
     // Try to acquire a lock - if it fails, another process is already working on it
     if (get_transient($lock_key)) {
-        error_log("[Post Forwarder] Lock exists for post $post_id, exiting");
         return;
     }
     
@@ -468,20 +458,17 @@ function post_forward_post($post_id) {
     // Additional check - has this post been forwarded recently?
     $recent_forward_key = 'post_forwarded_' . $post_id;
     if (get_transient($recent_forward_key)) {
-        error_log("[Post Forwarder] Post $post_id was recently forwarded, skipping");
         delete_transient($lock_key);
         delete_transient($processing_key);
         return;
     }
 
     if (defined('WP_IMPORTING')) {
-        error_log("[Post Forwarder] WP_IMPORTING defined, exiting");
         delete_transient($lock_key);
         delete_transient($processing_key);
         return;
     }
     if (wp_is_post_revision($post_id) || wp_is_post_autosave($post_id)) {
-        error_log("[Post Forwarder] Revision or autosave, exiting");
         delete_transient($lock_key);
         delete_transient($processing_key);
         return;
@@ -489,7 +476,6 @@ function post_forward_post($post_id) {
 
     $options = get_option('post_forwarding_options', array());
     if (empty($options['enabled'])) {
-        error_log("[Post Forwarder] Forwarding not enabled, exiting");
         delete_transient($lock_key);
         delete_transient($processing_key);
         return;
@@ -497,7 +483,6 @@ function post_forward_post($post_id) {
 
     $xproducts = get_post_meta($post_id, 'product', false);
     if (empty($xproducts)) {
-        error_log("[Post Forwarder] No product meta, exiting");
         delete_transient($lock_key);
         delete_transient($processing_key);
         return;
@@ -507,7 +492,6 @@ function post_forward_post($post_id) {
     $mappings = json_decode($mappings_json, true);
     $post = get_post($post_id);
     if (!$post) {
-        error_log("[Post Forwarder] No post object, exiting");
         delete_transient($lock_key);
         delete_transient($processing_key);
         return;
@@ -515,8 +499,6 @@ function post_forward_post($post_id) {
 
     // Get the original post type
     $original_post_type = $post->post_type;
-    error_log("[Post Forwarder] Original post type: $original_post_type");
-    error_log("[Post Forwarder] Processing portals for products: " . implode(', ', $xproducts));
 
     // Get ALL taxonomies for this post type
     $all_taxonomies = get_object_taxonomies($original_post_type, 'objects');
@@ -550,14 +532,11 @@ function post_forward_post($post_id) {
                     $fallback_tags[] = $term->slug; // Also include slug as alternative
                 }
             }
-            
-            error_log("[Post Forwarder] Found taxonomy '$taxonomy_name' with IDs: " . implode(', ', $term_ids));
         }
     }
 
     // Remove duplicates from fallback tags
     $fallback_tags = array_unique(array_filter($fallback_tags));
-    error_log("[Post Forwarder] Collected fallback tags: " . implode(', ', $fallback_tags));
 
     // Get featured image/thumbnail
     $featured_image_id = get_post_thumbnail_id($post_id);
@@ -565,7 +544,6 @@ function post_forward_post($post_id) {
     if ($featured_image_id) {
         $featured_image_url = wp_get_attachment_image_src($featured_image_id, 'full');
         $featured_image_url = $featured_image_url ? $featured_image_url[0] : null;
-        error_log("[Post Forwarder] Found featured image: $featured_image_url");
     }
 
     // Get all meta fields
@@ -582,7 +560,6 @@ function post_forward_post($post_id) {
     if (function_exists('get_fields')) {
         $acf_fields = get_fields($post_id);
         if (!$acf_fields) $acf_fields = array();
-        error_log("[Post Forwarder] Found " . count($acf_fields) . " ACF fields");
     }
 
     // Flatten remaining meta array
@@ -613,11 +590,8 @@ function post_forward_post($post_id) {
     // Loop through each selected product and send to corresponding portal
     foreach ($xproducts as $xproduct) {
         if (!isset($mappings[$xproduct])) {
-            error_log("[Post Forwarder] No mapping for product $xproduct, skipping");
             continue;
         }
-
-        error_log("[Post Forwarder] Processing product: $xproduct");
 
         $target = $mappings[$xproduct];
         
@@ -636,32 +610,23 @@ function post_forward_post($post_id) {
         
         if (!$success) {
             // If that fails, try with just tags as fallback
-            error_log("[Post Forwarder] Slug attempt failed, trying with fallback tags for product $xproduct");
             $success = post_forward_attempt_with_fallback_tags($post, $api_url, $auth, $fallback_tags, $meta_flattened, $options, $original_post_type, $target, $featured_image_url, $xproduct);
         }
         
         if ($success) {
             $forwarding_successful = true;
             $successful_portals[] = $xproduct;
-            error_log("[Post Forwarder] Successfully forwarded to portal: $xproduct");
-        } else {
-            error_log("[Post Forwarder] Failed to forward to portal: $xproduct");
         }
     }
 
     // Set the "recently forwarded" flag ONLY after processing ALL portals
     if ($forwarding_successful) {
         set_transient($recent_forward_key, true, 300); // 5 minutes
-        error_log("[Post Forwarder] Set recently forwarded flag after successful forwarding to: " . implode(', ', $successful_portals));
-    } else {
-        error_log("[Post Forwarder] No successful forwards, not setting recently forwarded flag");
     }
 
     // Clean up the transients at the end
     delete_transient($lock_key);
     delete_transient($processing_key);
-    
-    error_log("[Post Forwarder] Finished processing post $post_id. Success: " . ($forwarding_successful ? 'Yes' : 'No'));
 }
 
 // Helper function to attempt forwarding with term slugs
@@ -709,14 +674,12 @@ function post_forward_attempt_with_term_slugs($post, $api_url, $auth, $taxonomy_
         $body['meta'] = $meta_flattened;
     }
 
-    error_log("[Post Forwarder] [$product_key] Attempting with term slugs: " . json_encode($body, JSON_PRETTY_PRINT));
-
     $response = wp_remote_post($api_url, array(
         'headers' => array(
             'Authorization' => 'Basic ' . $auth,
             'Content-Type'  => 'application/json',
         ),
-        'body' => json_encode($body),
+        'body' => wp_json_encode($body),
         'timeout' => 30
     ));
 
@@ -725,8 +688,6 @@ function post_forward_attempt_with_term_slugs($post, $api_url, $auth, $taxonomy_
 
     // If custom post type endpoint returns 404, try with the posts endpoint
     if ($response_code === 404 && $original_post_type !== 'post') {
-        error_log("[Post Forwarder] [$product_key] Custom post type endpoint failed (404), trying posts endpoint");
-        
         $fallback_url = rtrim($target['url'], '/') . '/wp-json/wp/v2/posts';
         $body_with_type = $body;
         $body_with_type['type'] = $original_post_type;
@@ -736,7 +697,7 @@ function post_forward_attempt_with_term_slugs($post, $api_url, $auth, $taxonomy_
                 'Authorization' => 'Basic ' . $auth,
                 'Content-Type'  => 'application/json',
             ),
-            'body' => json_encode($body_with_type),
+            'body' => wp_json_encode($body_with_type),
             'timeout' => 30
         ));
 
@@ -744,8 +705,6 @@ function post_forward_attempt_with_term_slugs($post, $api_url, $auth, $taxonomy_
         $response_body = wp_remote_retrieve_body($response);
         $api_url = $fallback_url; // For logging
     }
-
-    error_log("[Post Forwarder] [$product_key] Term slugs attempt - Response: $response_code Body: " . substr($response_body, 0, 200));
 
     if ($response_code >= 200 && $response_code < 300) {
         if ($featured_image_url) {
@@ -755,7 +714,6 @@ function post_forward_attempt_with_term_slugs($post, $api_url, $auth, $taxonomy_
                 post_forwarder_set_featured_image($remote_post_id, $featured_image_url, $target, $original_post_type);
             }
         }
-        error_log("[Post Forwarder SUCCESS] [$product_key] Term slugs method succeeded");
         return true;
     }
 
@@ -782,14 +740,12 @@ function post_forward_attempt_with_fallback_tags($post, $api_url, $auth, $fallba
         $body['meta'] = $meta_flattened;
     }
 
-    error_log("[Post Forwarder] [$product_key] Attempting with fallback tags only: " . json_encode($body, JSON_PRETTY_PRINT));
-
     $response = wp_remote_post($api_url, array(
         'headers' => array(
             'Authorization' => 'Basic ' . $auth,
             'Content-Type'  => 'application/json',
         ),
-        'body' => json_encode($body),
+        'body' => wp_json_encode($body),
         'timeout' => 30
     ));
 
@@ -798,8 +754,6 @@ function post_forward_attempt_with_fallback_tags($post, $api_url, $auth, $fallba
 
     // If custom post type endpoint returns 404, try with the posts endpoint
     if ($response_code === 404 && $original_post_type !== 'post') {
-        error_log("[Post Forwarder] [$product_key] Custom post type endpoint failed (404), trying posts endpoint");
-        
         $fallback_url = rtrim($target['url'], '/') . '/wp-json/wp/v2/posts';
         $body_with_type = $body;
         $body_with_type['type'] = $original_post_type;
@@ -809,7 +763,7 @@ function post_forward_attempt_with_fallback_tags($post, $api_url, $auth, $fallba
                 'Authorization' => 'Basic ' . $auth,
                 'Content-Type'  => 'application/json',
             ),
-            'body' => json_encode($body_with_type),
+            'body' => wp_json_encode($body_with_type),
             'timeout' => 30
         ));
 
@@ -817,8 +771,6 @@ function post_forward_attempt_with_fallback_tags($post, $api_url, $auth, $fallba
         $response_body = wp_remote_retrieve_body($response);
         $api_url = $fallback_url; // For logging
     }
-
-    error_log("[Post Forwarder] [$product_key] Fallback tags attempt - Response: $response_code Body: " . substr($response_body, 0, 200));
 
     if ($response_code >= 200 && $response_code < 300) {
         if ($featured_image_url) {
@@ -828,11 +780,9 @@ function post_forward_attempt_with_fallback_tags($post, $api_url, $auth, $fallba
                 post_forwarder_set_featured_image($remote_post_id, $featured_image_url, $target, $original_post_type);
             }
         }
-        error_log("[Post Forwarder SUCCESS] [$product_key] Fallback tags method succeeded");
         return true;
     }
 
-    error_log("[Post Forwarder ERROR] [$product_key] Both attempts failed for this target");
     return false;
 }
 
@@ -852,8 +802,30 @@ register_activation_hook(__FILE__, function() {
 
 // Plugin deactivation hook
 register_deactivation_hook(__FILE__, function() {
-    // Clean up transients
-    global $wpdb;
-    $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_post_forwarding_%'");
-    $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_timeout_post_forwarding_%'");
+    // Use WordPress option deletion instead of direct database queries
+    $option_names = array();
+    
+    // Get all transient options for this plugin
+    $transient_patterns = array(
+        'post_forwarding_processing_',
+        'post_forwarding_lock_',
+        'post_forwarded_'
+    );
+    
+    // Since we can't use direct database queries, we'll let WordPress handle cleanup
+    // The transients will expire naturally based on their timeout values
+    
+    // Alternative: Clean up known transients if we have post IDs
+    // This is more compliant but less comprehensive
+    $recent_posts = get_posts(array(
+        'numberposts' => 100,
+        'post_status' => array('publish', 'draft', 'private'),
+        'fields' => 'ids'
+    ));
+    
+    foreach ($recent_posts as $post_id) {
+        delete_transient('post_forwarding_processing_' . $post_id);
+        delete_transient('post_forwarding_lock_' . $post_id);
+        delete_transient('post_forwarded_' . $post_id);
+    }
 });
