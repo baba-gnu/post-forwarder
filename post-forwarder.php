@@ -1,9 +1,19 @@
 <?php
 /**
- * Plugin Name: Post forwarder
- * Description: Forwards post to other wordpress sites
- * Version: 2.1
+ * Plugin Name: Post Forwarder
+ * Plugin URI: https://github.com/baba-gnu/post-forwarder
+ * Description: Forwards posts to other WordPress sites via REST API with taxonomy mapping and featured image support.
+ * Version: 2.1.0
  * Author: Sylwester Ulatowski
+ * Author email: sylwesterulatowski@gmail.com
+ * License: GPL v2 or later
+ * License URI: https://www.gnu.org/licenses/gpl-2.0.html
+ * Text Domain: post-forwarder
+ * Domain Path: /languages
+ * Requires at least: 5.0
+ * Tested up to: 6.3
+ * Requires PHP: 7.4
+ * Network: false
  */
 
 // Prevent direct access
@@ -11,14 +21,53 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
+// Define plugin constants
+define('POST_FORWARDER_VERSION', '2.1.0');
+define('POST_FORWARDER_PLUGIN_DIR', plugin_dir_path(__FILE__));
+define('POST_FORWARDER_PLUGIN_URL', plugin_dir_url(__FILE__));
+
 // Register settings
 add_action('admin_menu', function () {
-    add_options_page('Post Forwarding', 'Post Forwarding', 'manage_options', 'post-forwarding', 'post_forwarding_settings_page');
+    add_options_page(
+        __('Post Forwarding', 'post-forwarder'),
+        __('Post Forwarding', 'post-forwarder'),
+        'manage_options',
+        'post-forwarding',
+        'post_forwarding_settings_page'
+    );
 });
 
 add_action('admin_init', function () {
-    register_setting('post_forwarding', 'post_forwarding_options');
+    register_setting('post_forwarding', 'post_forwarding_options', array(
+        'sanitize_callback' => 'post_forwarding_sanitize_options'
+    ));
 });
+
+// Sanitize options
+function post_forwarding_sanitize_options($input) {
+    $sanitized = array();
+    
+    if (isset($input['enabled'])) {
+        $sanitized['enabled'] = (bool) $input['enabled'];
+    }
+    
+    if (isset($input['post_status'])) {
+        $sanitized['post_status'] = in_array($input['post_status'], array('publish', 'draft')) ? $input['post_status'] : 'draft';
+    }
+    
+    if (isset($input['mappings'])) {
+        // Validate JSON
+        $mappings = json_decode($input['mappings'], true);
+        if (json_last_error() === JSON_ERROR_NONE && is_array($mappings)) {
+            $sanitized['mappings'] = wp_json_encode($mappings);
+        } else {
+            add_settings_error('post_forwarding_options', 'invalid_json', __('Invalid JSON format in mappings.', 'post-forwarder'));
+            $sanitized['mappings'] = '{}';
+        }
+    }
+    
+    return $sanitized;
+}
 
 // Add meta box to post editor
 add_action('add_meta_boxes', function() {
@@ -26,7 +75,7 @@ add_action('add_meta_boxes', function() {
     foreach ($post_types as $post_type) {
         add_meta_box(
             'post_forwarding_meta_box',
-            'Post Forwarder',
+            __('Post Forwarder', 'post-forwarder'),
             'post_forwarding_meta_box_callback',
             $post_type,
             'side',
@@ -45,7 +94,7 @@ function post_forwarding_meta_box_callback($post) {
     $selected_products = get_post_meta($post->ID, 'product', false);
     
     echo '<div style="margin-bottom: 10px;">';
-    echo '<strong>Select Portals to Forward:</strong>';
+    echo '<strong>' . esc_html__('Select Portals to Forward:', 'post-forwarder') . '</strong>';
     echo '</div>';
     
     if (!empty($mappings) && is_array($mappings)) {
@@ -64,10 +113,12 @@ function post_forwarding_meta_box_callback($post) {
             echo '</div>';
         }
     } else {
-        echo '<p style="color: #666; font-style: italic;">No portals configured</p>';
+        echo '<p style="color: #666; font-style: italic;">' . esc_html__('No portals configured', 'post-forwarder') . '</p>';
     }
     
-    echo '<p style="font-size: 11px; color: #666; margin-top: 10px; border-top: 1px solid #ddd; padding-top: 8px;">Configure portals in Settings → Post Forwarding</p>';
+    echo '<p style="font-size: 11px; color: #666; margin-top: 10px; border-top: 1px solid #ddd; padding-top: 8px;">';
+    echo esc_html__('Configure portals in Settings → Post Forwarding', 'post-forwarder');
+    echo '</p>';
 }
 
 // Save meta box data
@@ -103,6 +154,10 @@ add_action('save_post', function($post_id) {
 
 // Settings page HTML
 function post_forwarding_settings_page() {
+    if (!current_user_can('manage_options')) {
+        wp_die(__('You do not have sufficient permissions to access this page.', 'post-forwarder'));
+    }
+    
     $options = get_option('post_forwarding_options', array());
     
     // Handle form submission for the new interface
@@ -123,9 +178,9 @@ function post_forwarding_settings_page() {
             }
         }
         
-        $options['mappings'] = json_encode($portals);
+        $options['mappings'] = wp_json_encode($portals);
         update_option('post_forwarding_options', $options);
-        echo '<div class="notice notice-success"><p>Portals saved successfully!</p></div>';
+        echo '<div class="notice notice-success"><p>' . esc_html__('Portals saved successfully!', 'post-forwarder') . '</p></div>';
     }
     
     // Parse existing mappings
@@ -135,21 +190,21 @@ function post_forwarding_settings_page() {
     
     ?>
     <div class="wrap">
-        <h1>Post Forwarding</h1>
+        <h1><?php echo esc_html(get_admin_page_title()); ?></h1>
         
         <form method="post" action="options.php">
             <?php settings_fields('post_forwarding'); ?>
             <table class="form-table">
                 <tr>
-                    <th scope="row">Enable Forwarding</th>
+                    <th scope="row"><?php esc_html_e('Enable Forwarding', 'post-forwarder'); ?></th>
                     <td><input type="checkbox" name="post_forwarding_options[enabled]" value="1" <?php checked(isset($options['enabled']) ? $options['enabled'] : '', 1); ?>></td>
                 </tr>
                 <tr>
-                    <th scope="row">Forwarded Post Status</th>
+                    <th scope="row"><?php esc_html_e('Forwarded Post Status', 'post-forwarder'); ?></th>
                     <td>
                         <select name="post_forwarding_options[post_status]">
-                            <option value="publish" <?php selected(isset($options['post_status']) ? $options['post_status'] : '', 'publish'); ?>>Publish</option>
-                            <option value="draft" <?php selected(isset($options['post_status']) ? $options['post_status'] : '', 'draft'); ?>>Draft</option>
+                            <option value="publish" <?php selected(isset($options['post_status']) ? $options['post_status'] : '', 'publish'); ?>><?php esc_html_e('Publish', 'post-forwarder'); ?></option>
+                            <option value="draft" <?php selected(isset($options['post_status']) ? $options['post_status'] : '', 'draft'); ?>><?php esc_html_e('Draft', 'post-forwarder'); ?></option>
                         </select>
                     </td>
                 </tr>
@@ -159,101 +214,101 @@ function post_forwarding_settings_page() {
 
         <hr>
 
-        <h2>Portal Configuration</h2>
+        <h2><?php esc_html_e('Portal Configuration', 'post-forwarder'); ?></h2>
         <form method="post" action="">
             <?php wp_nonce_field('save_portals', 'portals_nonce'); ?>
             
             <div id="portals-container">
                 <div style="background: #f9f9f9; padding: 15px; margin-bottom: 15px; border-left: 4px solid #0073aa;">
-                    <p><strong>How it works:</strong></p>
+                    <p><strong><?php esc_html_e('How it works:', 'post-forwarder'); ?></strong></p>
                     <ul>
-                        <li><strong>Portal Key:</strong> A unique identifier (like "sociaalweb") - this is what you'll select when forwarding posts</li>
-                        <li><strong>Portal Name:</strong> A friendly display name that appears in the interface</li>
-                        <li><strong>URL:</strong> The destination WordPress site URL</li>
-                        <li><strong>User ID & App Password:</strong> WordPress user ID and application password for API access</li>
+                        <li><strong><?php esc_html_e('Portal Key:', 'post-forwarder'); ?></strong> <?php esc_html_e('A unique identifier (like "sociaalweb") - this is what you\'ll select when forwarding posts', 'post-forwarder'); ?></li>
+                        <li><strong><?php esc_html_e('Portal Name:', 'post-forwarder'); ?></strong> <?php esc_html_e('A friendly display name that appears in the interface', 'post-forwarder'); ?></li>
+                        <li><strong><?php esc_html_e('URL:', 'post-forwarder'); ?></strong> <?php esc_html_e('The destination WordPress site URL', 'post-forwarder'); ?></li>
+                        <li><strong><?php esc_html_e('User ID & App Password:', 'post-forwarder'); ?></strong> <?php esc_html_e('WordPress user ID and application password for API access', 'post-forwarder'); ?></li>
                     </ul>
                 </div>
 
                 <?php if (empty($mappings)): ?>
                     <div class="portal-row" style="border: 1px solid #ddd; padding: 15px; margin-bottom: 10px;">
-                        <h4>Portal #1</h4>
+                        <h4><?php esc_html_e('Portal #1', 'post-forwarder'); ?></h4>
                         <table class="form-table">
                             <tr>
-                                <th>Portal Key</th>
-                                <td><input type="text" name="portals[0][key]" placeholder="e.g., sociaalweb" style="width: 200px;" /></td>
+                                <th><?php esc_html_e('Portal Key', 'post-forwarder'); ?></th>
+                                <td><input type="text" name="portals[0][key]" placeholder="<?php esc_attr_e('e.g., sociaalweb', 'post-forwarder'); ?>" style="width: 200px;" /></td>
                             </tr>
                             <tr>
-                                <th>Portal Name</th>
-                                <td><input type="text" name="portals[0][name]" placeholder="e.g., Sociaalweb Portal" style="width: 300px;" /></td>
+                                <th><?php esc_html_e('Portal Name', 'post-forwarder'); ?></th>
+                                <td><input type="text" name="portals[0][name]" placeholder="<?php esc_attr_e('e.g., Sociaalweb Portal', 'post-forwarder'); ?>" style="width: 300px;" /></td>
                             </tr>
                             <tr>
-                                <th>URL</th>
+                                <th><?php esc_html_e('URL', 'post-forwarder'); ?></th>
                                 <td><input type="url" name="portals[0][url]" placeholder="https://example.com" style="width: 400px;" /></td>
                             </tr>
                             <tr>
-                                <th>User ID</th>
+                                <th><?php esc_html_e('User ID', 'post-forwarder'); ?></th>
                                 <td><input type="text" name="portals[0][user]" placeholder="1728" style="width: 100px;" /></td>
                             </tr>
                             <tr>
-                                <th>App Password</th>
+                                <th><?php esc_html_e('App Password', 'post-forwarder'); ?></th>
                                 <td><input type="text" name="portals[0][password]" placeholder="xxxx-xxxx-xxxx-xxxx" style="width: 300px;" /></td>
                             </tr>
                         </table>
-                        <button type="button" class="button remove-portal">Remove Portal</button>
+                        <button type="button" class="button remove-portal"><?php esc_html_e('Remove Portal', 'post-forwarder'); ?></button>
                     </div>
                 <?php else: ?>
                     <?php $i = 0; foreach ($mappings as $key => $mapping): ?>
                         <div class="portal-row" style="border: 1px solid #ddd; padding: 15px; margin-bottom: 10px;">
-                            <h4>Portal #<?php echo $i + 1; ?></h4>
+                            <h4><?php echo esc_html(sprintf(__('Portal #%d', 'post-forwarder'), $i + 1)); ?></h4>
                             <table class="form-table">
                                 <tr>
-                                    <th>Portal Key</th>
-                                    <td><input type="text" name="portals[<?php echo $i; ?>][key]" value="<?php echo esc_attr($key); ?>" style="width: 200px;" /></td>
+                                    <th><?php esc_html_e('Portal Key', 'post-forwarder'); ?></th>
+                                    <td><input type="text" name="portals[<?php echo esc_attr($i); ?>][key]" value="<?php echo esc_attr($key); ?>" style="width: 200px;" /></td>
                                 </tr>
                                 <tr>
-                                    <th>Portal Name</th>
-                                    <td><input type="text" name="portals[<?php echo $i; ?>][name]" value="<?php echo esc_attr($mapping['name']); ?>" style="width: 300px;" /></td>
+                                    <th><?php esc_html_e('Portal Name', 'post-forwarder'); ?></th>
+                                    <td><input type="text" name="portals[<?php echo esc_attr($i); ?>][name]" value="<?php echo esc_attr($mapping['name']); ?>" style="width: 300px;" /></td>
                                 </tr>
                                 <tr>
-                                    <th>URL</th>
-                                    <td><input type="url" name="portals[<?php echo $i; ?>][url]" value="<?php echo esc_attr($mapping['url']); ?>" style="width: 400px;" /></td>
+                                    <th><?php esc_html_e('URL', 'post-forwarder'); ?></th>
+                                    <td><input type="url" name="portals[<?php echo esc_attr($i); ?>][url]" value="<?php echo esc_attr($mapping['url']); ?>" style="width: 400px;" /></td>
                                 </tr>
                                 <tr>
-                                    <th>User ID</th>
-                                    <td><input type="text" name="portals[<?php echo $i; ?>][user]" value="<?php echo esc_attr($mapping['user']); ?>" style="width: 100px;" /></td>
+                                    <th><?php esc_html_e('User ID', 'post-forwarder'); ?></th>
+                                    <td><input type="text" name="portals[<?php echo esc_attr($i); ?>][user]" value="<?php echo esc_attr($mapping['user']); ?>" style="width: 100px;" /></td>
                                 </tr>
                                 <tr>
-                                    <th>App Password</th>
-                                    <td><input type="text" name="portals[<?php echo $i; ?>][password]" value="<?php echo esc_attr($mapping['password']); ?>" style="width: 300px;" /></td>
+                                    <th><?php esc_html_e('App Password', 'post-forwarder'); ?></th>
+                                    <td><input type="text" name="portals[<?php echo esc_attr($i); ?>][password]" value="<?php echo esc_attr($mapping['password']); ?>" style="width: 300px;" /></td>
                                 </tr>
                             </table>
-                            <button type="button" class="button remove-portal">Remove Portal</button>
+                            <button type="button" class="button remove-portal"><?php esc_html_e('Remove Portal', 'post-forwarder'); ?></button>
                         </div>
                         <?php $i++; ?>
                     <?php endforeach; ?>
                 <?php endif; ?>
             </div>
 
-            <button type="button" id="add-portal" class="button">Add Another Portal</button>
+            <button type="button" id="add-portal" class="button"><?php esc_html_e('Add Another Portal', 'post-forwarder'); ?></button>
             <br><br>
-            <?php submit_button('Save Portals', 'primary', 'submit_portals'); ?>
+            <?php submit_button(__('Save Portals', 'post-forwarder'), 'primary', 'submit_portals'); ?>
         </form>
 
         <hr>
 
-        <h3>Advanced: JSON Configuration</h3>
+        <h3><?php esc_html_e('Advanced: JSON Configuration', 'post-forwarder'); ?></h3>
         <form method="post" action="options.php">
             <?php settings_fields('post_forwarding'); ?>
             <table class="form-table">
                 <tr>
-                    <th scope="row">Mappings (JSON)</th>
+                    <th scope="row"><?php esc_html_e('Mappings (JSON)', 'post-forwarder'); ?></th>
                     <td>
                         <textarea name="post_forwarding_options[mappings]" rows="10" cols="70"><?php echo esc_textarea($mappings_json); ?></textarea><br>
-                        <small>Advanced users can edit the JSON directly. Use the form above for easier configuration.</small>
+                        <small><?php esc_html_e('Advanced users can edit the JSON directly. Use the form above for easier configuration.', 'post-forwarder'); ?></small>
                     </td>
                 </tr>
             </table>
-            <?php submit_button('Save JSON'); ?>
+            <?php submit_button(__('Save JSON', 'post-forwarder')); ?>
         </form>
     </div>
 
@@ -263,15 +318,15 @@ function post_forwarding_settings_page() {
         
         $('#add-portal').click(function() {
             var newPortal = '<div class="portal-row" style="border: 1px solid #ddd; padding: 15px; margin-bottom: 10px;">' +
-                '<h4>Portal #' + (portalCount + 1) + '</h4>' +
+                '<h4><?php echo esc_js(__('Portal #', 'post-forwarder')); ?>' + (portalCount + 1) + '</h4>' +
                 '<table class="form-table">' +
-                '<tr><th>Portal Key</th><td><input type="text" name="portals[' + portalCount + '][key]" placeholder="e.g., sociaalweb" style="width: 200px;" /></td></tr>' +
-                '<tr><th>Portal Name</th><td><input type="text" name="portals[' + portalCount + '][name]" placeholder="e.g., Sociaalweb Portal" style="width: 300px;" /></td></tr>' +
-                '<tr><th>URL</th><td><input type="url" name="portals[' + portalCount + '][url]" placeholder="https://example.com" style="width: 400px;" /></td></tr>' +
-                '<tr><th>User ID</th><td><input type="text" name="portals[' + portalCount + '][user]" placeholder="1728" style="width: 100px;" /></td></tr>' +
-                '<tr><th>App Password</th><td><input type="text" name="portals[' + portalCount + '][password]" placeholder="xxxx-xxxx-xxxx-xxxx" style="width: 300px;" /></td></tr>' +
+                '<tr><th><?php echo esc_js(__('Portal Key', 'post-forwarder')); ?></th><td><input type="text" name="portals[' + portalCount + '][key]" placeholder="<?php echo esc_js(__('e.g., sociaalweb', 'post-forwarder')); ?>" style="width: 200px;" /></td></tr>' +
+                '<tr><th><?php echo esc_js(__('Portal Name', 'post-forwarder')); ?></th><td><input type="text" name="portals[' + portalCount + '][name]" placeholder="<?php echo esc_js(__('e.g., Sociaalweb Portal', 'post-forwarder')); ?>" style="width: 300px;" /></td></tr>' +
+                '<tr><th><?php echo esc_js(__('URL', 'post-forwarder')); ?></th><td><input type="url" name="portals[' + portalCount + '][url]" placeholder="https://example.com" style="width: 400px;" /></td></tr>' +
+                '<tr><th><?php echo esc_js(__('User ID', 'post-forwarder')); ?></th><td><input type="text" name="portals[' + portalCount + '][user]" placeholder="1728" style="width: 100px;" /></td></tr>' +
+                '<tr><th><?php echo esc_js(__('App Password', 'post-forwarder')); ?></th><td><input type="text" name="portals[' + portalCount + '][password]" placeholder="xxxx-xxxx-xxxx-xxxx" style="width: 300px;" /></td></tr>' +
                 '</table>' +
-                '<button type="button" class="button remove-portal">Remove Portal</button>' +
+                '<button type="button" class="button remove-portal"><?php echo esc_js(__('Remove Portal', 'post-forwarder')); ?></button>' +
                 '</div>';
             
             $('#portals-container').append(newPortal);
@@ -354,7 +409,7 @@ function post_forwarder_set_featured_image($remote_post_id, $image_url, $target,
                     'Authorization' => 'Basic ' . $auth,
                     'Content-Type' => 'application/json',
                 ),
-                'body' => json_encode(array('featured_media' => $media_id)),
+                'body' => wp_json_encode(array('featured_media' => $media_id)),
                 'timeout' => 30
             ));
 
@@ -372,7 +427,7 @@ function post_forwarder_set_featured_image($remote_post_id, $image_url, $target,
                         'Authorization' => 'Basic ' . $auth,
                         'Content-Type' => 'application/json',
                     ),
-                    'body' => json_encode(array('featured_media' => $media_id)),
+                    'body' => wp_json_encode(array('featured_media' => $media_id)),
                     'timeout' => 30
                 ));
                 
@@ -782,4 +837,23 @@ function post_forward_attempt_with_fallback_tags($post, $api_url, $auth, $fallba
 }
 
 add_action('save_post', 'post_forward_post', 20, 1);
-?>
+
+// Plugin activation hook
+register_activation_hook(__FILE__, function() {
+    // Set default options
+    $default_options = array(
+        'enabled' => false,
+        'post_status' => 'draft',
+        'mappings' => '{}'
+    );
+    
+    add_option('post_forwarding_options', $default_options);
+});
+
+// Plugin deactivation hook
+register_deactivation_hook(__FILE__, function() {
+    // Clean up transients
+    global $wpdb;
+    $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_post_forwarding_%'");
+    $wpdb->query("DELETE FROM {$wpdb->options} WHERE option_name LIKE '_transient_timeout_post_forwarding_%'");
+});
